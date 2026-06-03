@@ -1,0 +1,16 @@
+﻿[
+  {
+    "id": "wp_speed",
+    "project_title": "WordPress Optimization",
+    "tech_stack": ["WordPress", "Elementor", "WooCommerce"],
+    "problem_solved": "Site load time was over 7 seconds due to heavy uncompressed media files and missing page caching.",
+    "result_metric": "Optimized Core Web Vitals, squashed load time down to 1.5 seconds, and hit a 90+ score on Google PageSpeed Insights."
+  },
+  {
+    "id": "scraping_leads",
+    "project_title": "Real Estate Scraper",
+    "tech_stack": ["Python", "BeautifulSoup", "Selenium"],
+    "problem_solved": "Client needed to extract property listings daily but kept getting blocked by Cloudflare firewall protections.",
+    "result_metric": "Implemented a custom rotating proxy setup with human-like request delays, extracting 20k listings daily with zero bans."
+  }
+]

@@ -1,0 +1,6 @@
+﻿[
+  {
+    "type": "standard_pitch",
+    "winning_proposal": "Most likely the issue is with the mod_rewrite apache module on your hosting setup. If your subpages are throwing 404 errors but the homepage works, your .htaccess file just needs to be re-configured.\n\nI fixed this exact issue yesterday for a WooCommerce store. It takes about 15 minutes to sort out.\n\nDo you have access to your cPanel or hosting backend right now so I can take a look?"
+  }
+]
