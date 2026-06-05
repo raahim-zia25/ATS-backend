@@ -211,8 +211,8 @@ async def generate_proposal(request: ProposalRequest):
     portfolio_path = os.path.join(base_dir, "src", "data", "portfolio.json")
     examples_path = os.path.join(base_dir, "src", "data", "examples.json")
 
-    portfolio_context = "No specific portfolio data provided."
-    examples_context = "No specific examples provided."
+    portfolio_context = "No specific portfolio data provided. Focus on writing a strong, general professional proposal."
+    examples_context = "Tone should be professional, concise, and confident."
 
     try:
         if os.path.exists(portfolio_path):
@@ -224,10 +224,10 @@ async def generate_proposal(request: ProposalRequest):
     except Exception as e:
         print(f"DEBUG: Error loading data files: {e}")
 
-    # 2. Strict System Prompt (Anti-Code & Anti-Hallucination)
-    system_prompt = """You are a strict proposal evaluation and generation engine. 
-    CRITICAL RULE 1: Analyze the user input first. If the input is purely programming code (Python, React, etc.), a stack trace, random gibberish, or completely lacks a client asking for a job/project to be done, you MUST abort and output EXACTLY and ONLY the string 'INVALID_INPUT_ERROR'. Do not write a proposal for code snippets.
-    CRITICAL RULE 2: If it IS a valid job description, write a customized proposal using ONLY the context provided in the 'Portfolio Data' below to prove your expertise. Mirror the tone in the 'Style Examples'. Do not hallucinate fake names, fake experiences, or fake tools."""
+    # 2. Smarter System Prompt (Anti-Code, but allows general proposals)
+    system_prompt = """You are an expert Upwork proposal writer. 
+    CRITICAL RULE 1: Analyze the user input. If the input is purely programming code (Python, React, etc.), a stack trace, or random keyboard gibberish, you MUST abort and output EXACTLY and ONLY the string 'INVALID_INPUT_ERROR'.
+    CRITICAL RULE 2: If it IS a valid job description, write a customized proposal. Use the 'Portfolio Data' below to highlight relevant experience. If no specific portfolio data is provided, write a strong general proposal. Do not invent fake names."""
 
     dynamic_prompt = f"""
     --- My Real Portfolio Data ---
@@ -248,7 +248,7 @@ async def generate_proposal(request: ProposalRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": dynamic_prompt},
             ],
-            temperature=0.1,  # Extremely low temperature to enforce strict adherence to real data
+            temperature=0.4,
             max_tokens=800,
         )
         response_text = completion.choices[0].message.content.strip()
@@ -415,8 +415,7 @@ async def run_ats_analysis(cv_text: str, job_description: str):
     CRITICAL RULE 1: Read the Candidate CV Context first. If the CV contains random code, gibberish, an error message/stack trace, or completely lacks standard resume elements (like work history or technical skills), you MUST output EXACTLY and ONLY the string 'INVALID_DATA'.
     CRITICAL RULE 2: NEVER invent matches. A skill is a "strong_match" ONLY if it appears in BOTH the CV and the Job Description. 
     CRITICAL RULE 3: If a skill is in the Job Description but missing from the CV, it MUST go into "missing_skills". Never assume the candidate has it.
-    CRITICAL RULE 4: If the CV has no matching skills, the score MUST be 0.
-    CRITICAL RULE 5: ONLY output raw JSON. No formatting, no backticks, no prose."""
+    CRITICAL RULE 4: ONLY output raw JSON. No formatting, no backticks, no prose."""
 
     ats_prompt = f"""
     --- CANDIDATE CV START ---
@@ -427,7 +426,7 @@ async def run_ats_analysis(cv_text: str, job_description: str):
     {job_description}
     --- TARGET JOB DESCRIPTION END ---
 
-    Expected structure:
+    Expected structure (leave score as 0, it will be calculated automatically):
     {{
         "score": 0,
         "strong_matches": [],
@@ -456,7 +455,20 @@ async def run_ats_analysis(cv_text: str, job_description: str):
         if content.startswith("```"):
             content = content.replace("```json", "").replace("```", "").strip()
 
-        return json.loads(content)
+        result = json.loads(content)
+
+        # --- PYTHON MATHEMATICAL SCORE CALCULATION ---
+        matched_count = len(result.get("strong_matches", []))
+        missing_count = len(result.get("missing_skills", []))
+        total_skills = matched_count + missing_count
+
+        if total_skills > 0:
+            calculated_score = int((matched_count / total_skills) * 100)
+            result["score"] = calculated_score
+        else:
+            result["score"] = 0
+
+        return result
     except Exception as e:
         print(f"DEBUG: JSON Parse Error: {e}")
         return {"error": f"I failed to return valid JSON format. Error: {str(e)}"}
