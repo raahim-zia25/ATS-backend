@@ -129,7 +129,6 @@ def build_pdf_canvas(sanitized_cv_text: str) -> str:
     )
     lines = [line.strip() for line in clean_text.split("\n") if line.strip()]
 
-    # EXACT matching prevents "Core Languages" from turning into a section header
     standard_headers = [
         "ABOUT ME",
         "PROFESSIONAL SUMMARY",
@@ -206,24 +205,74 @@ def build_pdf_canvas(sanitized_cv_text: str) -> str:
 @app.post("/generate")
 async def generate_proposal(request: ProposalRequest):
     user_job_post = request.job_description
-    dynamic_prompt = f"Write a high-converting Upwork proposal for:\n{user_job_post}"
+
+    # 1. Dynamically Load Real-Time Data (Portfolio & Examples)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    portfolio_path = os.path.join(base_dir, "src", "data", "portfolio.json")
+    examples_path = os.path.join(base_dir, "src", "data", "examples.json")
+
+    portfolio_context = "No specific portfolio data provided."
+    examples_context = "No specific examples provided."
+
+    try:
+        if os.path.exists(portfolio_path):
+            with open(portfolio_path, "r", encoding="utf-8") as f:
+                portfolio_context = f.read()
+        if os.path.exists(examples_path):
+            with open(examples_path, "r", encoding="utf-8") as f:
+                examples_context = f.read()
+    except Exception as e:
+        print(f"DEBUG: Error loading data files: {e}")
+
+    # 2. Strict System Prompt (Anti-Code & Anti-Hallucination)
+    system_prompt = """You are a strict proposal evaluation and generation engine. 
+    CRITICAL RULE 1: Analyze the user input first. If the input is purely programming code (Python, React, etc.), a stack trace, random gibberish, or completely lacks a client asking for a job/project to be done, you MUST abort and output EXACTLY and ONLY the string 'INVALID_INPUT_ERROR'. Do not write a proposal for code snippets.
+    CRITICAL RULE 2: If it IS a valid job description, write a customized proposal using ONLY the context provided in the 'Portfolio Data' below to prove your expertise. Mirror the tone in the 'Style Examples'. Do not hallucinate fake names, fake experiences, or fake tools."""
+
+    dynamic_prompt = f"""
+    --- My Real Portfolio Data ---
+    {portfolio_context}
+
+    --- My Writing Style Examples ---
+    {examples_context}
+
+    --- Target Client Job Description ---
+    {user_job_post}
+    """
+
     try:
         groq_client = get_groq_client()
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": dynamic_prompt}],
-            temperature=0.7,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": dynamic_prompt},
+            ],
+            temperature=0.1,  # Extremely low temperature to enforce strict adherence to real data
             max_tokens=800,
         )
-        return {"proposal": completion.choices[0].message.content}
+        response_text = completion.choices[0].message.content.strip()
+
+        # Intercept the invalid error flag
+        if "INVALID_INPUT_ERROR" in response_text:
+            return {
+                "error": "Invalid input detected. Please paste an actual client job description, not code or gibberish."
+            }
+
+        return {"proposal": response_text}
     except Exception as e:
-        return {"proposal": f"Error: {str(e)}"}
+        return {"error": f"Error generating proposal: {str(e)}"}
 
 
 @app.post("/generate-cv")
 async def generate_cv(request: CVRequest):
     user_info = request.personal_details
-    cv_blueprint_prompt = f"""Format this raw data into an elite technical resume blueprint matching this EXACT structure. Do not use markdown bolding (**).
+
+    system_prompt = """You are a strict data validation and formatting engine. 
+    CRITICAL RULE 1: Analyze the user's input. If the data consists of programming code (like React, HTML, Python), random gibberish, or lacks real personal/professional context (like a real name or work history), you MUST reply with EXACTLY the word "INVALID_DATA" and nothing else.
+    CRITICAL RULE 2: Do NOT invent, hallucinate, or use fake placeholder names. Do not output conversational text."""
+
+    cv_blueprint_prompt = f"""If the data is valid, format it into an elite technical resume blueprint matching this EXACT structure. Do not use markdown bolding (**).
 
 [YOUR NAME]
 [YOUR SUBTITLE]
@@ -259,11 +308,20 @@ Raw Data:
         groq_client = get_groq_client()
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": cv_blueprint_prompt}],
-            temperature=0.3,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": cv_blueprint_prompt},
+            ],
+            temperature=0.0,
             max_tokens=1200,
         )
-        raw_cv_text = completion.choices[0].message.content
+        raw_cv_text = completion.choices[0].message.content.strip()
+
+        if "INVALID_DATA" in raw_cv_text:
+            return {
+                "error": "Invalid input detected. Please provide real resume details, not code or random text."
+            }
+
         pdf_base64 = build_pdf_canvas(clean_unicode_to_ascii(raw_cv_text))
         return {"text_preview": raw_cv_text, "pdf_data": pdf_base64}
     except Exception as e:
@@ -277,30 +335,30 @@ async def inject_skills_to_cv(request: InjectionRequest):
         skills_string = ", ".join(request.skills_to_add)
         skills_inserted = False
 
-        # Find framework/skills lines and smartly append
         for i, line in enumerate(lines):
-            line_upper = line.upper()
-            if "FRAMEWORKS & LIBRARIES" in line_upper or "FRAMEWORKS" in line_upper:
-                if ":" in line:
+            line_upper = line.upper().strip()
+            if (
+                "FRAMEWORKS & LIBRARIES" in line_upper
+                or "FRAMEWORKS" in line_upper
+                or "CORE LANGUAGES" in line_upper
+            ) and ":" in line_upper:
+                label_part = line_upper.split(":")[0]
+                if len(label_part) < 35:
                     lines[i] = f"{line}, {skills_string}"
-                else:
-                    lines[i] = f"{line}: {skills_string}"
-                skills_inserted = True
-                break
+                    skills_inserted = True
+                    break
 
-        # Fallback to general skills section
         if not skills_inserted:
             for i, line in enumerate(lines):
-                if (
-                    "TECHNICAL SKILLS" in line.upper()
-                    or "SKILLS" == line.upper().strip()
-                ):
+                line_upper = line.upper().strip()
+                if line_upper == "TECHNICAL SKILLS" or line_upper == "SKILLS":
                     lines.insert(i + 1, f"Frameworks & Libraries: {skills_string}")
                     skills_inserted = True
                     break
 
         if not skills_inserted:
-            lines.append(f"\nTECHNICAL SKILLS")
+            lines.append("")
+            lines.append(f"TECHNICAL SKILLS")
             lines.append(f"Frameworks & Libraries: {skills_string}")
 
         final_cv_text = "\n".join(lines)
@@ -334,32 +392,17 @@ async def match_upload(job_description: str = Form(...), file: UploadFile = File
                 extracted_text += text + "\n"
 
         if not extracted_text.strip():
-            return {"error": "Could not extract clear layers from this document."}
+            return {
+                "error": "Could not extract clear layers from this document. Make sure it is a valid text-based PDF."
+            }
 
-        # CLEANUP: Remove messy pdf extraction text from the top of the file before "ABOUT ME"
-        upper_text = extracted_text.upper()
-        start_idx = -1
-        for keyword in [
-            "ABOUT ME",
-            "PROFESSIONAL SUMMARY",
-            "WORK EXPERIENCE",
-            "EXPERIENCE",
-            "SUMMARY",
-        ]:
-            idx = upper_text.find(keyword)
-            if idx != -1:
-                start_idx = idx if start_idx == -1 else min(start_idx, idx)
+        clean_content = extracted_text.strip()
+        ats_analysis = await run_ats_analysis(clean_content, job_description)
 
-        if start_idx != -1:
-            clean_content = extracted_text[start_idx:]
-        else:
-            clean_content = extracted_text
+        if "error" in ats_analysis:
+            return ats_analysis
 
-        # Re-attach the strict, clean header for the template engine
-        blueprint_normalized = f"RAAHIM ZIA\nFrontend Developer\n+92 3328110607 | raahimzia25@gmail.com | Karachi, Pakistan\n\n{clean_content}"
-
-        ats_analysis = await run_ats_analysis(extracted_text, job_description)
-        ats_analysis["extracted_cv_text"] = blueprint_normalized
+        ats_analysis["extracted_cv_text"] = clean_content
 
         return ats_analysis
     except Exception as e:
@@ -367,28 +410,48 @@ async def match_upload(job_description: str = Form(...), file: UploadFile = File
 
 
 async def run_ats_analysis(cv_text: str, job_description: str):
+    system_prompt = """You are a ruthless, highly critical Applicant Tracking System (ATS).
+    
+    CRITICAL RULE 1: Read the Candidate CV Context first. If the CV contains random code, gibberish, an error message/stack trace, or completely lacks standard resume elements (like work history or technical skills), you MUST output EXACTLY and ONLY the string 'INVALID_DATA'.
+    CRITICAL RULE 2: NEVER invent matches. A skill is a "strong_match" ONLY if it appears in BOTH the CV and the Job Description. 
+    CRITICAL RULE 3: If a skill is in the Job Description but missing from the CV, it MUST go into "missing_skills". Never assume the candidate has it.
+    CRITICAL RULE 4: If the CV has no matching skills, the score MUST be 0.
+    CRITICAL RULE 5: ONLY output raw JSON. No formatting, no backticks, no prose."""
+
     ats_prompt = f"""
-    You are an advanced Applicant Tracking System. Evaluate this candidate's CV against the targeting requirements inside the Job Description.
-    Candidate CV: {cv_text}
-    Target Job Description: {job_description}
-    Output valid JSON only. NO markdown, NO backticks. 
+    --- CANDIDATE CV START ---
+    {cv_text}
+    --- CANDIDATE CV END ---
+
+    --- TARGET JOB DESCRIPTION START ---
+    {job_description}
+    --- TARGET JOB DESCRIPTION END ---
+
     Expected structure:
     {{
-        "score": 85,
-        "strong_matches": ["React.js", "Next.js"],
-        "missing_skills": ["Docker", "AWS"],
-        "suggestions": ["Add missing technologies to your profile"]
+        "score": 0,
+        "strong_matches": [],
+        "missing_skills": [],
+        "suggestions": []
     }}
     """
     try:
         groq_client = get_groq_client()
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": ats_prompt}],
-            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": ats_prompt},
+            ],
+            temperature=0.0,
             max_tokens=800,
         )
         content = completion.choices[0].message.content.strip()
+
+        if "INVALID_DATA" in content:
+            return {
+                "error": "Invalid resume detected. The uploaded document does not appear to be a legitimate, complete CV."
+            }
 
         if content.startswith("```"):
             content = content.replace("```json", "").replace("```", "").strip()
@@ -396,9 +459,4 @@ async def run_ats_analysis(cv_text: str, job_description: str):
         return json.loads(content)
     except Exception as e:
         print(f"DEBUG: JSON Parse Error: {e}")
-        return {
-            "score": 0,
-            "strong_matches": [],
-            "missing_skills": [],
-            "suggestions": [f"I failed to return valid JSON format. Error: {str(e)}"],
-        }
+        return {"error": f"I failed to return valid JSON format. Error: {str(e)}"}
