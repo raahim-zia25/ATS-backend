@@ -1,0 +1,44 @@
+# Dependencies and packages
+node_modules/
+/vendor/
+.venv/
+env/
+ENV/
+
+# Build outputs and binaries
+dist/
+build/
+out/
+*.exe
+*.dll
+*.so
+*.war
+*.ear
+
+# Operating System files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln.docstates
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Environmental variables / Secrets
+proposal_agent/.env
+proposal-ui/.env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key

@@ -4,3 +4,4 @@ groq
 fpdf
 pypdf
 python-dotenv
+python-multipart
