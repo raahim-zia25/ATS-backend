@@ -49,7 +49,7 @@ allowed_origins = sorted(default_origins | extra_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*.vercel.app",
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -206,7 +206,6 @@ def build_pdf_canvas(sanitized_cv_text: str) -> str:
 async def generate_proposal(request: ProposalRequest):
     user_job_post = request.job_description
 
-    # 1. Dynamically Load Real-Time Data (Portfolio & Examples)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     portfolio_path = os.path.join(base_dir, "src", "data", "portfolio.json")
     examples_path = os.path.join(base_dir, "src", "data", "examples.json")
@@ -224,10 +223,11 @@ async def generate_proposal(request: ProposalRequest):
     except Exception as e:
         print(f"DEBUG: Error loading data files: {e}")
 
-    # 2. Smarter System Prompt (Anti-Code, but allows general proposals)
     system_prompt = """You are an expert Upwork proposal writer. 
-    CRITICAL RULE 1: Analyze the user input. If the input is ACTUAL raw programming code snippets (e.g. HTML tags, python functions), a stack trace, or random keyboard gibberish, you MUST abort and output EXACTLY and ONLY the string 'INVALID_INPUT_ERROR'.
-    CRITICAL RULE 2: If it IS a valid job description, write a customized proposal. Use the 'Portfolio Data' below to highlight relevant experience. If no specific portfolio data is provided, write a strong general proposal. Do not invent fake names."""
+    CRITICAL RULE 1: Only abort and output 'INVALID_INPUT_ERROR' if the input is 100% meaningless keyboard gibberish or a raw python script. If it looks like a client request, process it.
+    CRITICAL RULE 2: If the user provides custom instructions (e.g., "make it short", "sign it Raahim"), FOLLOW THEM STRICTLY.
+    CRITICAL RULE 3 - NO AI BUZZWORDS: Write in a highly conversational, natural, and grounded human tone. AVOID words like: 'delve', 'robust', 'seamless', 'leverage', 'tapestry', 'testament', 'pivotal', 'navigate', 'elevate', or 'cutting-edge'. Be direct and warm.
+    CRITICAL RULE 4: Rely ONLY on the 'Portfolio Data' to highlight experience. NEVER invent fake names or fake tools."""
 
     dynamic_prompt = f"""
     --- My Real Portfolio Data ---
@@ -236,7 +236,7 @@ async def generate_proposal(request: ProposalRequest):
     --- My Writing Style Examples ---
     {examples_context}
 
-    --- Target Client Job Description ---
+    --- Target Client Job Description & My Custom Instructions ---
     {user_job_post}
     """
 
@@ -248,12 +248,11 @@ async def generate_proposal(request: ProposalRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": dynamic_prompt},
             ],
-            temperature=0.4,
+            temperature=0.3,
             max_tokens=800,
         )
         response_text = completion.choices[0].message.content.strip()
 
-        # Intercept the invalid error flag
         if "INVALID_INPUT_ERROR" in response_text:
             return {
                 "error": "Invalid input detected. Please paste an actual client job description, not code or gibberish."
@@ -268,13 +267,14 @@ async def generate_proposal(request: ProposalRequest):
 async def generate_cv(request: CVRequest):
     user_info = request.personal_details
 
-    system_prompt = """You are a strict data validation and formatting engine. 
-    CRITICAL RULE 1: Analyze the user's input. If the input is ACTUAL raw programming code snippets (like `def foo():`, `<div></div>`), server stack traces, or keyboard gibberish, you MUST reply with EXACTLY the word "INVALID_DATA" and nothing else.
-    IMPORTANT: Simply listing technology names like "React", "Python", "Node.js", or "HTML" as skills within a valid professional summary or work history is completely acceptable and MUST NOT be flagged as invalid.
-    CRITICAL RULE 2: Do NOT invent, hallucinate, or use fake placeholder names. Do not output conversational text."""
+    # FIXED: The AI will now approve the resume as long as it contains a human name and some experience.
+    system_prompt = """You are an expert CV formatting engine.
+    CRITICAL RULE 1: If the input contains a person's name and work experience or summary, IT IS A VALID RESUME. DO NOT reject it. Only output 'INVALID_DATA' if the text is 100% pure keyboard mash (e.g., 'asdfgh') or a raw server error log. 
+    CRITICAL RULE 2: A developer's resume will contain many technology names (React, Node, Python, HTML). This is normal. NEVER flag a resume as invalid just because it lists programming languages.
+    CRITICAL RULE 3: Ensure the 'ABOUT ME' section sounds human, concise, and professional. Completely avoid robotic AI buzzwords like 'robust', 'seamless', 'leverage', 'spearheaded', or 'innovative'. Use plain, direct English.
+    CRITICAL RULE 4: Do NOT invent, hallucinate, or use fake placeholder names."""
 
-    # STRICT FIX: Demanding a short subtitle and explicitly banning URLs from the contact section
-    cv_blueprint_prompt = f"""If the data is valid professional/resume context, format it into an elite technical resume blueprint matching this EXACT structure. Do not use markdown bolding (**).
+    cv_blueprint_prompt = f"""Format this raw data into an elite technical resume blueprint matching this EXACT structure. Do not use markdown bolding (**).
 
 [YOUR NAME]
 [SHORT JOB DESIGNATION ONLY - maximum 3 to 5 words, absolutely no experience text]
@@ -314,7 +314,7 @@ Raw Data:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": cv_blueprint_prompt},
             ],
-            temperature=0.1,
+            temperature=0.2,
             max_tokens=1200,
         )
         raw_cv_text = completion.choices[0].message.content.strip()
@@ -412,9 +412,8 @@ async def match_upload(job_description: str = Form(...), file: UploadFile = File
 
 
 async def run_ats_analysis(cv_text: str, job_description: str):
-    system_prompt = """You are a ruthless, highly critical Applicant Tracking System (ATS).
-    
-    CRITICAL RULE 1: Read the Candidate CV Context first. If the CV contains ACTUAL raw programming code snippets, an error message/stack trace, or completely lacks standard resume elements (like work history or technical skills), you MUST output EXACTLY and ONLY the string 'INVALID_DATA'. (Note: Listing technologies like React or Python as skills is valid).
+    system_prompt = """You are a highly critical Applicant Tracking System (ATS).
+    CRITICAL RULE 1: ONLY output 'INVALID_DATA' if the CV is 100% raw programming code or meaningless gibberish. If it looks like a resume with a name and skills, evaluate it.
     CRITICAL RULE 2: NEVER invent matches. A skill is a "strong_match" ONLY if it appears in BOTH the CV and the Job Description. 
     CRITICAL RULE 3: If a skill is in the Job Description but missing from the CV, it MUST go into "missing_skills". Never assume the candidate has it.
     CRITICAL RULE 4: ONLY output raw JSON. No formatting, no backticks, no prose."""
