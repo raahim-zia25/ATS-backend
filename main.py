@@ -7,6 +7,7 @@ import os
 import base64
 import json
 import io
+import re
 from pypdf import PdfReader
 from typing import List
 
@@ -127,7 +128,10 @@ def build_pdf_canvas(sanitized_cv_text: str) -> str:
         .replace("===", "")
         .strip()
     )
-    lines = [line.strip() for line in clean_text.split("\n") if line.strip()]
+    raw_lines = [line.strip() for line in clean_text.split("\n") if line.strip()]
+
+    # FIXED: Automatically scrub any lines that are just "Page 1", "Page 2", etc.
+    lines = [line for line in raw_lines if not re.match(r"(?i)^Page\s+\d+$", line)]
 
     standard_headers = [
         "ABOUT ME",
@@ -210,8 +214,8 @@ async def generate_proposal(request: ProposalRequest):
     portfolio_path = os.path.join(base_dir, "src", "data", "portfolio.json")
     examples_path = os.path.join(base_dir, "src", "data", "examples.json")
 
-    portfolio_context = "No specific portfolio data provided. Focus on writing a strong, general professional proposal."
-    examples_context = "Tone should be professional, concise, and confident."
+    portfolio_context = "No specific portfolio data provided."
+    examples_context = "Tone should be professional, direct, and concise."
 
     try:
         if os.path.exists(portfolio_path):
@@ -223,11 +227,11 @@ async def generate_proposal(request: ProposalRequest):
     except Exception as e:
         print(f"DEBUG: Error loading data files: {e}")
 
-    system_prompt = """You are an expert Upwork proposal writer. 
-    CRITICAL RULE 1: Only abort and output 'INVALID_INPUT_ERROR' if the input is 100% meaningless keyboard gibberish or a raw python script. If it looks like a client request, process it.
-    CRITICAL RULE 2: If the user provides custom instructions (e.g., "make it short", "sign it Raahim"), FOLLOW THEM STRICTLY.
-    CRITICAL RULE 3 - NO AI BUZZWORDS: Write in a highly conversational, natural, and grounded human tone. AVOID words like: 'delve', 'robust', 'seamless', 'leverage', 'tapestry', 'testament', 'pivotal', 'navigate', 'elevate', or 'cutting-edge'. Be direct and warm.
-    CRITICAL RULE 4: Rely ONLY on the 'Portfolio Data' to highlight experience. NEVER invent fake names or fake tools."""
+    system_prompt = """You are an expert freelance proposal writer. 
+    CRITICAL RULE 1: Analyze the input. If it is ENTIRELY raw programming code, an error log, or complete gibberish with NO job description, output EXACTLY and ONLY the string 'INVALID_INPUT_ERROR'.
+    CRITICAL RULE 2: The user will often include custom instructions at the bottom of the job description. YOU MUST FOLLOW THESE USER INSTRUCTIONS STRICTLY. If the user specifies a name for the sign-off/regards, use ONLY that name for the signature. Do not use that name for the client greeting.
+    CRITICAL RULE 3 - NO AI BUZZWORDS: Write in a highly conversational, natural, and grounded human tone. You MUST completely AVOID words like: 'delve', 'robust', 'seamless', 'leverage', 'tapestry', 'testament', 'pivotal', 'navigate', 'elevate', or 'cutting-edge'. Be direct and warm.
+    CRITICAL RULE 4: Rely on the 'Portfolio Data' to highlight experience, but always honor the user's explicit instructions over default data."""
 
     dynamic_prompt = f"""
     --- My Real Portfolio Data ---
@@ -267,12 +271,11 @@ async def generate_proposal(request: ProposalRequest):
 async def generate_cv(request: CVRequest):
     user_info = request.personal_details
 
-    # FIXED: The AI will now approve the resume as long as it contains a human name and some experience.
     system_prompt = """You are an expert CV formatting engine.
-    CRITICAL RULE 1: If the input contains a person's name and work experience or summary, IT IS A VALID RESUME. DO NOT reject it. Only output 'INVALID_DATA' if the text is 100% pure keyboard mash (e.g., 'asdfgh') or a raw server error log. 
-    CRITICAL RULE 2: A developer's resume will contain many technology names (React, Node, Python, HTML). This is normal. NEVER flag a resume as invalid just because it lists programming languages.
-    CRITICAL RULE 3: Ensure the 'ABOUT ME' section sounds human, concise, and professional. Completely avoid robotic AI buzzwords like 'robust', 'seamless', 'leverage', 'spearheaded', or 'innovative'. Use plain, direct English.
-    CRITICAL RULE 4: Do NOT invent, hallucinate, or use fake placeholder names."""
+    CRITICAL RULE 1: ONLY output 'INVALID_DATA' if the input is 100% raw programming code (e.g., Python scripts, HTML tags) or complete keyboard mash gibberish.
+    CRITICAL RULE 2: If the text contains ANY human name, contact info, or work experience, IT IS VALID. Process it immediately. Do NOT reject it, even if the email address name does not match the person's name.
+    CRITICAL RULE 3: Do not invent your own placeholder names, use exactly the names and data the user provided.
+    CRITICAL RULE 4: Keep the 'ABOUT ME' section conversational, professional, and free of AI buzzwords like 'robust', 'seamless', or 'spearhead'."""
 
     cv_blueprint_prompt = f"""Format this raw data into an elite technical resume blueprint matching this EXACT structure. Do not use markdown bolding (**).
 
@@ -412,11 +415,15 @@ async def match_upload(job_description: str = Form(...), file: UploadFile = File
 
 
 async def run_ats_analysis(cv_text: str, job_description: str):
-    system_prompt = """You are a highly critical Applicant Tracking System (ATS).
-    CRITICAL RULE 1: ONLY output 'INVALID_DATA' if the CV is 100% raw programming code or meaningless gibberish. If it looks like a resume with a name and skills, evaluate it.
-    CRITICAL RULE 2: NEVER invent matches. A skill is a "strong_match" ONLY if it appears in BOTH the CV and the Job Description. 
-    CRITICAL RULE 3: If a skill is in the Job Description but missing from the CV, it MUST go into "missing_skills". Never assume the candidate has it.
-    CRITICAL RULE 4: ONLY output raw JSON. No formatting, no backticks, no prose."""
+    system_prompt = """You are a ruthless, enterprise-grade Applicant Tracking System (ATS) akin to Jobscan, Taleo, or Workday.
+    
+    CRITICAL RULE 1: ONLY output 'INVALID_DATA' if the CV is 100% raw programming code or meaningless gibberish.
+    CRITICAL RULE 2: NO KEYWORD STUFFING ALLOWED. A skill is a "strong_match" ONLY if it is actively demonstrated in a sentence within the Work Experience or Projects section. 
+    CRITICAL RULE 3: If a required skill from the Job Description is ONLY found in a comma-separated "Skills" list at the bottom of the CV, you MUST put it in "missing_skills" because it lacks professional context.
+    CRITICAL RULE 4: Evaluate both Hard Technical Skills AND Soft Skills. If soft skills are missing, put them in "missing_skills".
+    CRITICAL RULE 5: In "suggestions", provide harsh, actionable advice demanding measurable metrics (%, $, hours).
+    CRITICAL RULE 6: The "suggestions" array MUST contain ONLY plain text strings. Do NOT output nested JSON objects inside the array.
+    CRITICAL RULE 7: ONLY output raw JSON. No formatting, no backticks, no prose."""
 
     ats_prompt = f"""
     --- CANDIDATE CV START ---
@@ -430,9 +437,9 @@ async def run_ats_analysis(cv_text: str, job_description: str):
     Expected structure (leave score as 0, it will be calculated automatically):
     {{
         "score": 0,
-        "strong_matches": [],
-        "missing_skills": [],
-        "suggestions": []
+        "strong_matches": ["skill1", "skill2"],
+        "missing_skills": ["skill3", "skill4"],
+        "suggestions": ["string suggestion 1", "string suggestion 2"]
     }}
     """
     try:
